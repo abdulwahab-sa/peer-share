@@ -4,6 +4,8 @@ import streamSaver from 'streamsaver';
 import { useSearchParams } from 'react-router-dom';
 import useAvatar from '../hooks/useAvatar';
 import Notification from './Notification';
+import { IceCandidateSchema, SdpSchema } from '../utils/validation';
+import { iceServer } from '../iceServers';
 
 interface ServerToClientEvents {
 	noArg: () => void;
@@ -15,7 +17,7 @@ interface ClientToServerEvents {
 	hello: () => void;
 }
 
-const worker = new Worker('../../worker.js');
+const worker = new Worker(new URL('../worker.ts', import.meta.url));
 
 const Room = () => {
 	const socketRef = useRef<Socket | null>(null);
@@ -33,7 +35,7 @@ const Room = () => {
 	const { name, src } = useAvatar();
 
 	console.log('myAvatar', { name, src });
-
+	console.log('remote avatar', remoteAvatar);
 	const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(
 		import.meta.env.VITE_API_URL
 	);
@@ -45,14 +47,16 @@ const Room = () => {
 		socketRef.current.on('other user', (userID) => {
 			callUser(userID);
 			otherUser.current = userID;
+			console.log('other user ran');
 		});
 
 		socketRef.current.on('user joined', (userID) => {
 			otherUser.current = userID;
+			console.log('User joined');
 		});
 
 		socketRef.current.on('other-details', (payload) => {
-			console.log('other user name', payload.name, payload.src);
+			console.log('other details ran', payload.name, payload.src);
 			remoteAvatar.current = payload;
 		});
 
@@ -81,71 +85,101 @@ const Room = () => {
 	}
 
 	function createPeer(userID) {
-		const peer = new RTCPeerConnection({
-			iceServers: [
-				{ urls: 'stun:stun.l.google.com:19302' },
-				{ urls: 'stun:global.stun.twilio.com:3478' },
-			],
-		});
+		const peer = new RTCPeerConnection(iceServer);
+
+		// {
+		// 	iceServers: [
+		// 		{ urls: 'stun:stun.l.google.com:19302' },
+		// 		{ urls: 'stun:global.stun.twilio.com:3478' },
+		// 	],
+		// }
 
 		peer.onicecandidate = handleICECandidateEvent;
 		peer.onnegotiationneeded = () => handleNegotiationNeededEvent(userID);
 		return peer;
 	}
 
-	function handleNegotiationNeededEvent(userID) {
-		peerRef.current
-			.createOffer()
-			.then((offer) => {
-				return peerRef.current.setLocalDescription(offer);
-			})
-			.then(() => {
-				const payload = {
-					target: userID,
-					caller: socketRef.current.id,
-					sdp: peerRef.current.localDescription,
-				};
-				socketRef.current.emit('offer', payload);
-			})
-			.catch((e) => alert(e));
+	async function handleNegotiationNeededEvent(userID) {
+		try {
+			const offer = await peerRef.current.createOffer();
+			await peerRef.current.setLocalDescription(offer);
+
+			const payload = {
+				target: userID,
+				caller: socketRef.current.id,
+				sdp: peerRef.current.localDescription,
+			};
+
+			socketRef.current.emit('offer', payload);
+		} catch (e) {
+			alert(e);
+		}
 	}
 
-	function handleOffer(incoming) {
-		peerRef.current = createPeer(incoming.caller);
-		socketRef.current.emit('my-details', { roomID, name, src });
-		peerRef.current.ondatachannel = (e) => {
-			sendChannel.current = e.channel;
-			sendChannel.current.onopen = () => setConnection(true);
-			sendChannel.current.onclose = () => setConnection(false);
-			sendChannel.current.onmessage = handleReceivingData;
-		};
+	//{target, caller, sdp}
 
-		const desc = new RTCSessionDescription(incoming.sdp);
-		peerRef.current
-			.setRemoteDescription(desc)
-			.then(() => {
-				return peerRef.current.createAnswer();
-			})
-			.then((answer) => {
-				return peerRef.current.setLocalDescription(answer);
-			})
-			.then(() => {
-				const payload = {
-					target: incoming.caller,
-					caller: socketRef.current.id,
-					sdp: peerRef.current.localDescription,
-				};
-				socketRef.current.emit('answer', payload);
-			})
-			.catch((e) => console.log(e));
+	// {
+	// 	"target": "OVemee5M3hbDyX-KAABY",
+	// 	"caller": "D-o2w3XaC1OcHnfWAABa",
+	// 	"sdp": {
+	// 	  "type": "offer",
+	// 	  "sdp": "v=0\r\no=mozilla...THIS_IS_SDPARTA-99.0 1522518399717319087 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=sendrecv\r\na=fingerprint:sha-256 08:42:FD:2E:01:EB:7A:04:DB:14:B8:7D:55:B5:8B:CB:C7:F2:21:B4:A2:6C:1D:AE:C3:E6:CD:A0:49:D2:88:4C\r\na=group:BUNDLE 0\r\na=ice-options:trickle\r\na=msid-semantic:WMS *\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=ice-pwd:aaf867babaa8ec4cd0c039bc47954128\r\na=ice-ufrag:50ae7a51\r\na=mid:0\r\na=setup:actpass\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\n"
+	// 	}
+	//   }
+
+	async function handleOffer(incoming) {
+		console.log('handleOffer', incoming);
+		try {
+			SdpSchema.parse(incoming);
+			peerRef.current = createPeer(incoming.caller);
+			socketRef.current.emit('my-details', { roomID, name, src });
+			peerRef.current.ondatachannel = (e) => {
+				sendChannel.current = e.channel;
+				sendChannel.current.onopen = () => setConnection(true);
+				sendChannel.current.onclose = () => setConnection(false);
+				sendChannel.current.onmessage = handleReceivingData;
+			};
+
+			const desc = new RTCSessionDescription(incoming.sdp);
+			await peerRef.current.setRemoteDescription(desc);
+
+			const answer = await peerRef.current.createAnswer();
+			await peerRef.current.setLocalDescription(answer);
+
+			const payload = {
+				target: incoming.caller,
+				caller: socketRef.current.id,
+				sdp: peerRef.current.localDescription,
+			};
+
+			socketRef.current.emit('answer', payload);
+		} catch (error) {
+			console.log(error);
+		}
 	}
 
 	function handleAnswer(message) {
-		const desc = new RTCSessionDescription(message.sdp);
-		peerRef.current.setRemoteDescription(desc).catch((e) => console.log(e));
+		console.log('handleAnswer', message);
+		try {
+			SdpSchema.parse(message);
+			const desc = new RTCSessionDescription(message.sdp);
+			peerRef.current.setRemoteDescription(desc);
+		} catch (error) {
+			console.log(error);
+		}
 	}
+	// {targer, caller, sdp}
+	//  {
+	// 	"target": "D-o2w3XaC1OcHnfWAABa",
+	// 	"caller": "OVemee5M3hbDyX-KAABY",
+	// 	"sdp": {
+	// 	  "type": "answer",
+	// 	  "sdp": "v=0\r\no=mozilla...THIS_IS_SDPARTA-99.0 4945187818853774212 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=sendrecv\r\na=fingerprint:sha-256 A5:02:50:E9:A9:40:8F:8F:06:D7:97:57:AC:49:45:7E:28:57:B3:E2:3E:6D:90:BD:D4:2B:8E:03:A2:6E:A4:7C\r\na=group:BUNDLE 0\r\na=ice-options:trickle\r\na=msid-semantic:WMS *\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=ice-pwd:7a9e2b998d35354ab7803cde85e648f6\r\na=ice-ufrag:71298478\r\na=mid:0\r\na=setup:active\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\n"
+	// 	}
+	//   }
 
 	function handleICECandidateEvent(e) {
+		console.log('handleICECandidateEvent', e);
 		if (e.candidate) {
 			const payload = {
 				target: otherUser.current,
@@ -155,9 +189,22 @@ const Room = () => {
 		}
 	}
 
+	// {
+	// 	"candidate": "candidate:2 1 TCP 2105524479 e6680f57-d48d-4370-b5d8-200ce383c1a7.local 9 typ host tcptype active",
+	// 	"sdpMLineIndex": 0,
+	// 	"sdpMid": "0",
+	// 	"usernameFragment": "f4e10f77"
+	//   }
 	function handleNewICECandidateMsg(incoming) {
-		const candidate = new RTCIceCandidate(incoming);
-		peerRef.current.addIceCandidate(candidate).catch((e) => console.log(e));
+		console.log('handleNewICE', incoming);
+
+		try {
+			IceCandidateSchema.parse(incoming);
+			const candidate = new RTCIceCandidate(incoming);
+			peerRef.current.addIceCandidate(candidate);
+		} catch (error) {
+			console.log(error);
+		}
 	}
 
 	function handleReceivingData(e) {
@@ -257,3 +304,50 @@ const Room = () => {
 };
 
 export default Room;
+
+// function handleOffer(incoming) {
+// 	peerRef.current = createPeer(incoming.caller);
+// 	socketRef.current.emit('my-details', { roomID, name, src });
+// 	peerRef.current.ondatachannel = (e) => {
+// 		sendChannel.current = e.channel;
+// 		sendChannel.current.onopen = () => setConnection(true);
+// 		sendChannel.current.onclose = () => setConnection(false);
+// 		sendChannel.current.onmessage = handleReceivingData;
+// 	};
+
+// 	const desc = new RTCSessionDescription(incoming.sdp);
+// 	peerRef.current
+// 		.setRemoteDescription(desc)
+// 		.then(() => {
+// 			return peerRef.current.createAnswer();
+// 		})
+// 		.then((answer) => {
+// 			return peerRef.current.setLocalDescription(answer);
+// 		})
+// 		.then(() => {
+// 			const payload = {
+// 				target: incoming.caller,
+// 				caller: socketRef.current.id,
+// 				sdp: peerRef.current.localDescription,
+// 			};
+// 			socketRef.current.emit('answer', payload);
+// 		})
+// 		.catch((e) => console.log(e));
+// }
+
+// function handleNegotiationNeededEvent(userID) {
+// 	peerRef.current
+// 		.createOffer()
+// 		.then((offer) => {
+// 			return peerRef.current.setLocalDescription(offer);
+// 		})
+// 		.then(() => {
+// 			const payload = {
+// 				target: userID,
+// 				caller: socketRef.current.id,
+// 				sdp: peerRef.current.localDescription,
+// 			};
+// 			socketRef.current.emit('offer', payload);
+// 		})
+// 		.catch((e) => alert(e));
+// }

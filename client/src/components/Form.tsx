@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RoomIdGenerator } from '../utils/roomIdGenerator';
+import { generateRoomId } from '../utils/roomIdGenerator';
 
 const Form = () => {
 	const [error, setError] = useState('');
-	const [roomId, setRoomId] = useState('');
+	const [roomId, setRoomId] = useState<string | undefined>(undefined);
+	const defaultIdLength = 36;
 	const navigate = useNavigate();
 
 	const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
 		e.preventDefault();
-		if (roomId.length !== 36) {
+		if (roomId?.length !== defaultIdLength) {
 			setError('Please enter a valid room ID');
 			return;
 		}
@@ -17,7 +18,7 @@ const Form = () => {
 	};
 
 	const handleNewRoomClick = () => {
-		const newRoomId = RoomIdGenerator();
+		const newRoomId = generateRoomId();
 		if (newRoomId) {
 			navigate(`/room?id=${newRoomId}`);
 		}
@@ -32,17 +33,17 @@ const Form = () => {
 					id="username"
 					placeholder="Enter Room ID"
 					type="text"
-					value={roomId}
-					onChange={(e) => setRoomId(e.target.value)}
+					value={roomId || ''}
+					onChange={(e) => setRoomId(e.target.value || undefined)}
 				/>
 
 				{error && <p className="text-red-500 text-sm">{error}</p>}
 				<input
 					type="submit"
-					disabled={roomId.length !== 36}
+					disabled={!roomId || roomId.length !== defaultIdLength}
 					value={'Join Room'}
 					className={` w-full ${
-						roomId.length === 36
+						roomId?.length === defaultIdLength
 							? 'bg-[#7752FE] hover:bg-[#5438b8] cursor-pointer'
 							: 'bg-[#b3a9d6] cursor-not-allowed'
 					}  placeholder:font-poppins placeholder:font-normal placeholder:text-sm text-white font-medium text-base p-2 rounded-md font-poppins`}
