@@ -4,8 +4,6 @@ import http from 'http';
 import { Server, Socket } from 'socket.io';
 const app = express();
 const server = http.createServer(app);
-app.use(cors());
-app.use(express.json());
 
 const io = new Server(server, {
 	cors: {
@@ -13,6 +11,16 @@ const io = new Server(server, {
 		methods: ['GET', 'POST'],
 	},
 });
+
+app.use(
+	cors({
+		origin: process.env.CLIENT_URL,
+		methods: ['GET', 'POST', 'PUT', 'DELETE'],
+		allowedHeaders: ['Content-Type', 'Authorization'],
+	})
+);
+
+app.use(express.json());
 
 type KeyValueMap<T> = Record<string, T>;
 
